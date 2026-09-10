@@ -1,6 +1,5 @@
 <?php
 
-
 class rsBuilders {
     
     # other source builder

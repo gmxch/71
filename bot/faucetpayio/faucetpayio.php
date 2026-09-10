@@ -7,9 +7,8 @@ if (!($api instanceof skibidixxx)) die(logx('err', 'pilih api skibidixxx'));
 
 logx('err', "\nneed detailed info to prevent suspicious session, and email otp if possible");
 logx('err', "gmxch api is also can get this digital key, (not recommended for prevent soft ban (ip binding))");
-$acc = Config::credential([], true);
 
-login:
+$acc = Config::credential([], false, ['PROXY']);
 $host = "https://faucetpay.io";
 $app = "https://api.faucetpay.io";
 
@@ -17,172 +16,193 @@ $b = Banner::getInstance();
 $b->show();
 $b->task1('ok', "use with caution");
 $b->task2('ok', "");
-(function () {
+
+(function () use ($acc) {
+    $cookieFile = Config::cookie();
+    $userAgent = $acc['user_agent'] ?? 'Mozilla/5.0';
+    
+    $proxy = $acc['PROXY'] ?? '';
+    $thmb = $acc['thumbmark'];
+    $vist = $acc['visitor_id'];
+    
+    if ($proxy) putenv("PROXY=$proxy");
+    Inf::setup($userAgent, $cookieFile);
     Proxy::load();
     Check::Geo();
-    $cookieFile = Config::cookie();
-    $acc = Config::Credential([], true);
-    
-    $userAgent = $acc['user_agent'];
-    
-    $x_key = $acc['x_digital_key'];
-    $y_key = $acc['y_digital_key'];
-    
-    Inf::setup($userAgent, $cookieFile);
-    
-} ) ();
+})();
 
-{
-    
-    $mailPath = __DIR__.'/email.txt';
-    if (!is_file($mailPath)) die(logx('err', 'mail.txt not found, create & fill with ur email list. (perline format'));
+$mailPath = __DIR__ . '/email.txt';
+$mailJson = __DIR__ . '/email.json';
+$autoOtp = false;
+
+$jsonList = is_file($mailJson) ? json_decode(_get($mailJson), true) : null;
+
+if (!is_array($jsonList) || empty($jsonList)) {
+    if (!is_file($mailPath)) {
+        die(logx('err', 'email.txt not found. Create & fill it first.'));
+    }
     $mailList = file($mailPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
     
-    $jsonList = null;
-    $mailJson = __DIR__.'/email.json';
-    if (is_file($mailJson)) $jsonList = json_decode(_get($mailJson), 1);
-    
+    Logger::X('warn', "total mail: " . count($mailList));
+    Logger::X('info', "is the entire account use same password?");
+    while (true) {
+        $conf = strtolower(trim(_rl('[ y/n ]: ')));
+        if ($conf === 'y') {
+            do { $pass = trim(_rl('password: ')); } while ($pass === '');
+            foreach ($mailList as $mail) {
+                $jsonList[] = ['mail' => $mail, 'pass' => $pass];
+            }
+            break;
+        }
+        if ($conf === 'n') {
+            foreach ($mailList as $mail) {
+                do { $pass = trim(_rl("pass for $mail: ")); } while ($pass === '');
+                $jsonList[] = ['mail' => $mail, 'pass' => $pass];
+            }
+            break;
+        }
+        Logger::X('err', 'pilih y atau n');
+    }
+    _put($mailJson, json_encode($jsonList, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 }
 
-{
+main_menu:
+while (true) {
+    $b->show();
+    $b->task1('ok', "JSON Primary (" . count($jsonList) . " accounts loaded)");
+    $b->task2('info', "Auto OTP: " . ($autoOtp ? 'ON' : 'OFF'));
     
-    if (!empty($mailList) && !$jsonList) {
-        $mailNumb = count($mailList);
-        Logger::X('warn', "total mail: $mailNumb");
-        Logger::X('info', "is the entire account use same password?");
-        while (true) {
-            $conf = strtolower(trim(_rl('[ y/n ]: ')));
-        
-            if ($conf === 'y') {
-                do {
-                    $pass = trim(_rl('password: '));
-                } while ($pass === '');
-        
-                foreach ($mailList as $mail) {
-                    $jsonList[] = [
-                        'mail' => $mail,
-                        'pass' => $pass
-                    ];
-                }
-                break;
-            }
-        
-            if ($conf === 'n') {
-                foreach ($mailList as $mail) {
-                    do {
-                        $pass = trim(_rl("pass for $mail: "));
-                    } while ($pass === '');
-        
-                    $jsonList[] = [
-                        'mail' => $mail,
-                        'pass' => $pass
-                    ];
-                }
-                break;
-            }
-        
-            Logger::X('err', 'pilih y atau n');
+    Logger::X('info', "[1] Reload / Update from email.txt", true, true);
+    Logger::X('info', "[2] Auto OTP (Current: " . ($autoOtp ? 'ON' : 'OFF') . ")", true, true);
+    Logger::X('info', "[3] Auto-Login - Claim RP", true, true);
+    Logger::X('info', "[4] Balance - Send Menu", true, true);
+    Logger::X('info', "[5] Reset All Auth", true, true);
+    Logger::X('info', "[6] Exit", true, true);
+    
+    $choice = trim(_rl(' input: '));
+    #$choice = "3";
+    
+    if ($choice === '1') {
+        if (!is_file($mailPath)) {
+            Logger::X('err', 'email.txt not found');
+            _rl('Enter to continue...');
+            continue;
         }
-    
-        _put($mailJson, json_encode($jsonList, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-        goto login;
-    }
-    
-    if (!empty($mailList) && !empty($jsonList)) {
+        $mailList = file($mailPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
         $existingMails = array_column($jsonList, 'mail');
-        foreach (array_diff($mailList, $existingMails) as $mail) {
-            do {
-                $pass = trim(_rl("pass for $mail: "));
-            } while ($pass === '');
-            
-            $jsonList[] = ['mail' => $mail, 'pass' => $pass];
+        $updated = false;
+        
+        foreach ($mailList as $mail) {
+            if (!in_array($mail, $existingMails)) {
+                do { $pass = trim(_rl("New pass for $mail: ")); } while ($pass === '');
+                $jsonList[] = ['mail' => $mail, 'pass' => $pass];
+                $updated = true;
+            }
         }
         
-        if (count($mailList) !== count($jsonList)) goto login;
-        
-        _put($mailJson, json_encode($jsonList, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-    }
-    
-    if (!empty($jsonList)) {
-        foreach ($jsonList as &$account) {
+        if ($updated) {
+            _put($mailJson, json_encode($jsonList, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            Logger::X('ok', 'JSON updated. You can now run [3] to login new accounts.');
+        } else {
+            Logger::X('info', 'No new accounts found in email.txt');
+        }
+        _rl('Enter to continue...');
+    } 
+    elseif ($choice === '2') {
+        $autoOtp = !$autoOtp;
+        Logger::X('info', "Auto OTP set to: " . ($autoOtp ? 'ON' : 'OFF'));
+        _rl('Enter to continue...');
+    } 
+    elseif ($choice === '3') {
+        $b->task1('info', "Starting Auto-Login & Claim...");
+        $loginCount = 0;
+
+        foreach ($jsonList as $key => &$account) {
             if (empty($account['auth'])) {
                 $b->task2('info', "Getting auth for: {$account['mail']}");
-                $sol = _getBer($account, $acc, $api, $app);
+                
+                $sol = _getBer($account, $acc, $api, $host, $autoOtp, $app);
+                
+                if ($sol === false) {
+                    $b->task2('warn', "Skipped {$account['mail']} (Need 2FA & Auto OTP OFF)");
+                    continue;
+                }
+                
                 if ($sol) {
                     [$auth, $etag] = $sol;
                     $account['auth'] = $auth;
                     $account['etag'] = $etag;
                     _put($mailJson, json_encode($jsonList, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-                    $b->task2('ok', "saved Auth for {$account['mail']}");
+                    $b->task2('ok', "Saved Auth for {$account['mail']}");
+                    $loginCount++;
                 }
             }
         }
         unset($account);
-        $b->task1('info', "");
-        $b->task2('info', "");
-    }
-    
-}
+        $b->task1('ok', $loginCount > 0 ? "Auto-Login finished. {$loginCount} processed." : "All accounts have Auth or skipped.");
+        _rl('Enter to continue...');
 
-foreach ($jsonList as $acc) {
-    #$b->task1('info', "Getting RP for: {$acc['mail']}");
-    $bearer = ['authorization: Bearer '.$acc['auth']];
-    $rp = json_decode(Net::X($app.'/rp/claim-daily-rp', 'POST', null, Inf::$cookie, ['authorization: Bearer '.$acc['auth']], $host, Inf::$uagent)?: '', 1);
-    #var_dump($rp); 
-    if ($rp && $rp['success'] !== false) {
-        $b->task1('', "claimed ({$rp['reward']} rp) for {$acc['mail']}");
-    } else $b->task1('info', "fetching account...");
-    
-}
-
-while (true) {
-    $b->show();
-    $b->task1('ok', "use with caution");
-    $b->task2('info', 'Input');
-    
-    Logger::X('info', "[1 Fetch all account", true, true);
-    Logger::X('info', "[2 send once", true, true);
-    Logger::X('info', "[3 send bulk", true, true);
-    
-    $rlFP = '3';
-    $rlFP = trim(_rl(' input: '));
-    switch ($rlFP) {
-        case '1':
-            _getBal($jsonList, $host, $app);
-            break;
-        case '2':
-            sendO($jsonList, $host, $app);
-            break;
+        $b->show();
+        /*
+        $b->task1('info', "Claiming Daily RP...");
+        foreach ($jsonList as $accData) {
+            if (empty($accData['auth'])) continue;
+            $bearer = ['authorization: Bearer ' . $accData['auth']];
+            $rp = json_decode(Net::X($app.'/rp/claim-daily-rp', 'POST', null, null, $bearer, $host, Inf::$uagent) ?: '', true);
+            if ($rp && ($rp['success'] ?? false) !== false) {
+                $b->task1('', "claimed ({$rp['reward']} rp) for {$accData['mail']}");
+            }
+        }
+        _rl('Enter to continue...');
+        */
+    } 
+    elseif ($choice === '4') {
+        // --- BALANCE / SEND SUBMENU ---
+        while (true) {
+            $b->show();
+            $b->task1('ok', "Balance / Send Menu");
+            Logger::X('info', "[1] Fetch all balance", true, true);
+            Logger::X('info', "[2] Send once", true, true);
+            Logger::X('info', "[3] Send bulk", true, true);
+            Logger::X('info', "[4] Back to Main Menu", true, true);
             
-        case '3':
-            sendB($jsonList, $host, $app);
-            break;
-            
-        default:
-            continue 2;
-        
+            $rlFP = trim(_rl(' input: '));
+            switch ($rlFP) {
+                case '1': _getBal($jsonList, $host, $app); break;
+                case '2': sendO($jsonList, $host, $app); break;
+                case '3': sendB($jsonList, $host, $app); break;
+                case '4': continue 2; // Kembali ke main_menu
+                default: continue 2;
+            }
+        }
+    } 
+    elseif ($choice === '5') {
+        foreach ($jsonList as &$account) {
+            unset($account['auth'], $account['etag']);
+        }
+        unset($account);
+        _put($mailJson, json_encode($jsonList, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        Logger::X('info', "All Auth cleared from JSON.");
+        _rl('Enter to continue...');
+    } 
+    elseif ($choice === '6') {
+        die("Exited.\n");
     }
-    
 }
 
-
+// ==========================================================
+// FUNCTIONS
+// ==========================================================
 
 function _getBal($akun, $host, $app, $coinsOnly = false) {
-    #print_r($akun); die;
-    
     $b = Banner::getInstance();
-    $b->task1('ok', '');
-    $b->task2('ok', '');
-    
-    $available = [];
     $filteredAkun = [];
-    
     foreach ($akun as &$acc) {
-        $b->task1('info', 'fetching balance, please wait');
-        
-        $bearer = ['authorization: Bearer '.$acc['auth']];
-        $wallet = json_decode(Net::X($app.'/wallet/get-information', 'GET', null, Inf::$cookie, $bearer, $host, Inf::$uagent)?: '', 1);
-        #var_dump($wallet); _rl($acc['mail']);
+        if (empty($acc['auth'])) continue;
+        $b->task1('info', 'fetching balance...');
+        $bearer = ['authorization: Bearer ' . $acc['auth']];
+        $wallet = json_decode(Net::X($app.'/wallet/get-information', 'GET', null, null, $bearer, $host, Inf::$uagent) ?: '', true);
+        #var_dump($wallet);
         
         $info = $wallet['data'] ?? null;
         if (empty($info)) continue;
@@ -191,68 +211,37 @@ function _getBal($akun, $host, $app, $coinsOnly = false) {
             $userBalances = [];
             foreach ($info['coin_balances'] as $coin) {
                 $bal = (float)$coin['balance'];
-                if ($bal > 0.00000100) {
-                    $userBalances[$coin['coin']] = $bal;
-                }
+                if ($bal > 0.00000100) $userBalances[$coin['coin']] = $bal;
             }
-            
             if (!empty($userBalances)) {
                 $acc['balances'] = $userBalances;
                 $acc['total_balance'] = array_sum($userBalances);
                 $filteredAkun[] = $acc;
             }
         } else {
-            #print_r($info); die;
             $saldo = (float)($info['statistics']['portfolio_value'] ?? 0);
             if ($saldo > 0) {
                 $acc['balance'] = $saldo;
                 $filteredAkun[] = $acc;
-                
-                $emailLen = strlen($acc['mail']);
-                $padding = 23 - $emailLen;
-                if ($padding < 0) $padding = 0;
-                
-                Logger::M(" ".$acc['mail'], false);
+                $padding = max(0, 23 - strlen($acc['mail']));
+                Logger::M(" " . $acc['mail'], false);
                 Logger::X('info', sprintf(str_repeat(' ', $padding) . "[ balance: %-10.8f USD ]", $saldo), true, true);
             }
         }
     }
     unset($acc);
-    
-    $akun = $filteredAkun;
-    
-    if ($coinsOnly) return $akun;
-
+    if ($coinsOnly) return $filteredAkun;
     $b->task1('ok', 'all accounts fetched');
-    _rl('    enter to continue...');
-    
-    return $akun;
+    _rl('Enter to continue...');
+    return $filteredAkun;
 }
 
 function sendO($akun, $host, $app) {
     Logger::X('err', 'not stable yet');
-    return;
-    
-    $bal = _getBal($akun, $host, $app, true);
-    print_r($bal);
-    
-    if (!empty($bal)) {
-        
-        foreach ($bal as $acc => $jjn) {
-            var_dump($acc, $jjn);
-            
-            
-        die;
-        }
-        
-    }
-    
-    
-    die;
+    _rl('Enter to continue...');
 }
 
 function sendB($akun, $host, $app) {
-    
     $b = Banner::getInstance();
     $b->show();
     $bal = _getBal($akun, $host, $app, true);
@@ -260,90 +249,114 @@ function sendB($akun, $host, $app) {
     $b->task2('err', 'USE WITH CAUTION, ALWAYS CHECK ADDRESS');
     
     if (!empty($bal)) {
-    
-        $tf = _rl('INPUT RECEIVER: ');
+        $tf = trim(_rl('INPUT RECEIVER: '));
         foreach ($bal as $acc) {
-            $b->show();
-            $_M = $acc['mail'];
-            $_P = $acc['pass'];
-            $_A = $acc['auth'];
-            $_E = $acc['etag'];
-            $_B = $acc['balances'];
-            
-            if ($_M === $tf) continue;
-            
-            foreach ($_B as $_C => $_J) {
-                $b->task1('info', "from $_M to $tf");
-                
+            if ($acc['mail'] === $tf) continue;
+            foreach ($acc['balances'] as $_C => $_J) {
                 $jmlh = rtrim(rtrim(sprintf("%.10f", (float)$_J), '0'), '.');
-                
-                $b->task2('ok', "amount $jmlh ($_C)");
-                
-                $_H = ["authorization: Bearer $_A"];
-                $_P = [
-                    'coin' => $_C,
-                    'amount' => $jmlh,
-                    '2fa_code' => '',
-                    'user' => $tf
-                ];
-                
-                $send = json_decode(Net::X($app.'/transfer/send', 'POST', $_P, Inf::$cookie, $_H, $host, Inf::$uagent, json: true)?: '', 1)['message'] ?? null;
-                
+                $_H = ["authorization: Bearer " . $acc['auth']];
+                $_P = ['coin' => $_C, 'amount' => $jmlh, '2fa_code' => '', 'user' => $tf];
+                $send = json_decode(Net::X($app.'/transfer/send', 'POST', $_P, null, $_H, $host, Inf::$uagent, json: true) ?: '', true)['message'] ?? null;
                 if (!empty($send)) {
                     Logger::M($acc['mail'], false);
                     Logger::X('info', $send, true, true);
                 }
                 _sle(5);
-                
             }
-            
         }
-    
     }
-    
+    _rl('Enter to continue...');
 }
 
-function _getBer($akun, $cred, $api, $host) {
+function _getBer($akun, $cred, $api, $host, $autoOtp = false, $app = "https://api.faucetpay.io") {
+    $needCaptcha = false;
     
+    needcaptcha:
     $payload = [
         'user_email' => $akun['mail'],
         'password' => $akun['pass'],
-        'captcha_response' => _getTKN($api)['token'] ?? '',
-        'x_digital_key' => $cred['x_digital_key'],
-        'y_digital_key' => $cred['y_digital_key']
+        'fingerprint' => [
+            'visitor_id' => $cred['visitor_id'] ?? '',
+            'thumbmark' => $cred['thumbmark'] ?? '',
+        ],
     ];
     
-    $lo = json_decode(Net::X($host.'/account/login', 'POST', $payload, Inf::$cookie, reff: $host.'/login', ua: Inf::$uagent, json: true)?: '', 1);
+    if ($needCaptcha) {
+        $payload['captcha_response'] = _getTKN($api, $cred)['token'] ?? '';
+    }
+    
+    $loo = Net::X($host.'/app-api/session/login', 'POST', $payload, null, reff: $host.'/login', ua: Inf::$uagent, json: true, d: 1);
+    $lo = json_decode(($loo['body'] ?: ''), true);
+    $fpses = $loo['headers']['set-cookie'][0] ?? null;
     
     #var_dump($lo);
     
-    if ($lo && isset($lo['token'])) {
+    if ($lo && ($lo['ok'] ?? false)) {
         logm($akun['mail'], false);
-        logx('ok', $lo['message'], true, true);
-        return [$lo['token'], $lo['etag']];
+        logx('ok', $lo['message'] ?? 'Login OK', true, true);
+        
+        $tokn = Scraper::_jP($fpses, '/fp_session=([^;]+)/')[1][0] ?? null;
+        
+        if (($lo['needs_2fa'] ?? false) || !($lo['tfa_authorized'] ?? false)) {
+            
+            if ($autoOtp && _getOTP($tokn, $host, $akun['mail'])) {
+                #logx('warn', "Skip {$akun['mail']}: Need 2FA and Auto OTP is OFF");
+                return [$tokn, ''];
+            }
+            
+            return false;
+            
+        }
+        
+        return [$tokn, ''];
     } else {
-        var_dump($lo);
-        die;
+        if (isset($lo["captcha_required"]) && $lo["captcha_required"] === true && !empty(getenv('PROXY'))) {
+            $needCaptcha = true;
+            goto needcaptcha;
+        }
+        logx('err', "Login failed for {$akun['mail']}: " . ($lo['message'] ?? 'Unknown error'));
+        return false;
     }
-    
-    
-    
-die;
 }
 
-function _getTKN($api) {
+function _getTKN($api, $cred) {
     $cap = $api->run('faucetpay', [
         'sitekey' => 'a3760bfe5cf4254b2759c19fb2601667',
         'domain' => 'https://faucetpay.io',
+        'proxy' => getenv("PROXY") ?? '',
     ])['done'] ?? '';
     
-    #var_dump($cap); die;
     if (str_starts_with($cap, 'cap')) {
-        $token = trim(str_replace('cap_res:', '', $cap));
-        return ['token' => $token];
+        return ['token' => trim(str_replace('cap_res:', '', $cap))];
     }
-    
     return [];
 }
 
-
+function _getOTP($coki, $host, $mail) {
+    
+    @unlink(Inf::$cookie);
+    $head = Inf::netHead(['fp_session' => $coki]);
+    $ott = json_decode(Net::X($host.'/app-api/account/get-2fa-type', 'GET', null, null, $head, reff: $host.'/verify-2fa', ua: Inf::$uagent)?: '', 1);
+    
+    for ($otry = 0; $otry < 3; $otry++) {
+        
+        if ($ott['ok']) {
+            Net::X($host.'/app-api/account/resend-2fa-code', 'POST', head: $head, reff: $host.'/verify-2fa', ua: Inf::$uagent, json: 1);
+            $input = _rl("please input ".$ott['tfa_type']." for $mail: ");
+            
+            $otv = json_decode(Net::X($host.'/app-api/session/verify-2fa', 'POST', ['code' => $input], null, $head, reff: $host.'/verify-2fa', ua: Inf::$uagent, json: 1)?: '', 1);
+            #var_dump($otv);
+            
+            logm($mail, false);
+            logx('info', ($otv['message'] ?? 'Unknown error'), true, true);
+            
+            if ($otv['ok']) return true;
+            
+        }
+        
+    } 
+    
+    
+    return false;
+    
+}
