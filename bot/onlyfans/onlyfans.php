@@ -463,6 +463,7 @@ return (new class {
             
             if ($mungkin_tanpa_fp) {
                 #var_dump($solution);
+                _sle(3);
                 return ['captcha_answer' => (string)$solution];
             }
             
