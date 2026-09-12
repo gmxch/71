@@ -419,7 +419,7 @@ return (new class {
                     'cnt' => (int)($req['headers']['x-captcha-target-count'][0] ?? 1)
                 ];
                 $wtype = 'necaptcha';
-            } elseif (str_contains($html, 'Match the animation, not the letter or color!')) {
+            } elseif (preg_match('/Match the animation|Match the movement type/i', $html)) {
                 
                 $mungkin_tanpa_fp = true;
                 
