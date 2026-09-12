@@ -137,8 +137,8 @@ return (new class {
                     
                     $ret99 = 0;
                     while (true) {
-                        if ($claimed >= 10) {
-                            styler("waiting for next minute", fn() => _sle(60));
+                        if ($claimed >= 2) {
+                            styler("waiting for next minute", fn() => _sle(7));
                             $claimed = 0;
                         }
                         $ret99++;
@@ -372,20 +372,30 @@ return (new class {
         $x_cap = ['ins' => 'ASC', 'cnt' => 3];
         $warna = null;
         $wtype = null;
+        $req = null;
+        $mungkin_tanpa_fp = false;
         
-        $req = Net::X(
-            $host.'/faucet/captcha_image?_t=' . (time() * 1000), 
+        $init = json_decode(Net::X(
+            $host.'/faucet/init_captcha?_t=' . (time() * 1000), 
             'GET', null, Inf::$cookie, $this->headersCF, 
-            $reff, Inf::$uagent, d: true
-        );
+            $reff, Inf::$uagent
+        )?: '', 1)['token'] ?? null;
         
+        if ($init) {
+            $req = Net::X(
+                $host.'/faucet/captcha_image?token=' . $init, 
+                'GET', null, Inf::$cookie, $this->headersCF, 
+                $reff, Inf::$uagent, d: true
+            );
+        }
         
-        #_put('img.png', $req['body']); #die;
+        #_put('img.png', $req['body']); die;
         #unset($req['body']);
         #var_dump($req['headers']); #die;
         
         
         if (!empty($req) && $req !== 99) {
+            
             
             $img = $req['body'] ?? null;
             $x_pow = [
@@ -409,6 +419,17 @@ return (new class {
                     'cnt' => (int)($req['headers']['x-captcha-target-count'][0] ?? 1)
                 ];
                 $wtype = 'necaptcha';
+            } elseif (str_contains($html, 'Match the animation, not the letter or color!')) {
+                
+                $mungkin_tanpa_fp = true;
+                
+                $warna = [
+                    'ins' => '',
+                    'cnt' => 1
+                ];
+                $wtype = 'necaptcha';
+                
+                
             }
             
             $x_cap = $warna ?? [
@@ -432,13 +453,18 @@ return (new class {
             }
             
             #_put('img.png', $img); #die;
-            #var_dump($x_cap); die;
+            #var_dump($x_cap); #die;
             
             $captype = $wtype ?? 'onlyfans';
             $cappart = $warna ?? $x_cap;
             
             $solution = Solve::img($this->api, $reff, $captype, $img, $cappart);
             if (isset($solution['trouble'])) return ['trouble' => 'reload'];
+            
+            if ($mungkin_tanpa_fp) {
+                #var_dump($solution);
+                return ['captcha_answer' => (string)$solution];
+            }
             
             preg_match_all('/x[=:\s]*(\d+)[,\s]*y[=:\s]*(\d+)/i', $solution, $matches, PREG_SET_ORDER);
             if (count($matches) < $x_cap['cnt']) return ['trouble' => 'reload'];
